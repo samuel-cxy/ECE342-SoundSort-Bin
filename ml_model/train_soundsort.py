@@ -17,11 +17,12 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 
 # Root folder containing your class subfolders:
 # data/tissue, data/can, data/plastic, data/other
-DATA_DIR = Path("data")
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 
 # Fixed class order.
 # This order matters because class index 0/1/2/3 will map to these names.
-CLASSES = ["tissue", "can", "plastic", "other"]
+CLASSES = ["can", "glass", "paper", "plastic"]
 
 # All audio will be resampled to this sample rate
 TARGET_SR = 16000
@@ -377,7 +378,6 @@ def main():
     pipe = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", LogisticRegression(
-            multi_class="multinomial",
             solver="lbfgs",
             max_iter=3000,
             class_weight="balanced"
@@ -422,7 +422,6 @@ def main():
     final_model = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", LogisticRegression(
-            multi_class="multinomial",
             solver="lbfgs",
             max_iter=3000,
             class_weight="balanced",
@@ -447,7 +446,7 @@ def main():
     print(confusion_matrix(y_test, y_test_pred))
 
     # Export trained model parameters to C header
-    export_c_header(final_model, "soundsort_model.h")
+    export_c_header(final_model, BASE_DIR / "soundsort_model.h")
 
 
 # Standard Python entry point

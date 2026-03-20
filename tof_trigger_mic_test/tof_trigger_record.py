@@ -96,7 +96,7 @@ try:
         # VERY IMPORTANT: Flush the serial buffer before looping 
         # to ensure the next trigger is clean
         ser.reset_input_buffer()
-        time.sleep(0.5) 
+        time.sleep(2) 
 
 except KeyboardInterrupt:
     print("\nData collection stopped by user. Exiting cleanly...")
