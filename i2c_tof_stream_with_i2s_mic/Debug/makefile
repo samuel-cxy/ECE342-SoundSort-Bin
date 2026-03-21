@@ -60,8 +60,8 @@ all: main-build
 main-build: i2c_tof_stream_with_i2s_mic.elf secondary-outputs
 
 # Tool invocations
-i2c_tof_stream_with_i2s_mic.elf i2c_tof_stream_with_i2s_mic.map: $(OBJS) $(USER_OBJS) C:\Users\samue\Documents\CubeMX\i2c_tof_stream_with_i2s_mic\STM32F446ZETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "i2c_tof_stream_with_i2s_mic.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\samue\Documents\CubeMX\i2c_tof_stream_with_i2s_mic\STM32F446ZETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="i2c_tof_stream_with_i2s_mic.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+i2c_tof_stream_with_i2s_mic.elf i2c_tof_stream_with_i2s_mic.map: $(OBJS) $(USER_OBJS) C:\Users\jacky\ECE342\ (Comp\ Hard)\ECE342-SoundSort-Bin\i2c_tof_stream_with_i2s_mic\STM32F446ZETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "i2c_tof_stream_with_i2s_mic.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\jacky\ECE342 (Comp Hard)\ECE342-SoundSort-Bin\i2c_tof_stream_with_i2s_mic\STM32F446ZETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="i2c_tof_stream_with_i2s_mic.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
