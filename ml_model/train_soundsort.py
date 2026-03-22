@@ -1,454 +1,240 @@
-# pip install numpy scipy scikit-learn matplotlib
+# pip install numpy scipy scikit-learn
 
 import os
-from pathlib import Path
 import numpy as np
 from scipy.io import wavfile
-from scipy.signal import resample_poly
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
-# =========================================================
-# Configuration
-# =========================================================
-
-# Root folder containing your class subfolders:
-# data/tissue, data/can, data/plastic, data/other
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-
-# Fixed class order.
-# This order matters because class index 0/1/2/3 will map to these names.
+# =========================
+# CONFIG
+# =========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASET_PATH = os.path.join(BASE_DIR, "my_dataset")
 CLASSES = ["can", "glass", "paper", "plastic"]
 
-# All audio will be resampled to this sample rate
-TARGET_SR = 16000
-
-# After trimming silence, each clip will be forced to this duration
-# by either cutting or zero-padding
-CLIP_DURATION_S = 0.50
-
-# FFT size used for frequency-domain features
+FS = 16000
+AUDIO_LEN = 8000
 N_FFT = 1024
+RANDOM_STATE = 42
 
-# Frequency bands for band-energy features
-# Since TARGET_SR = 16000, Nyquist frequency is 8000 Hz
-BAND_EDGES = [0, 300, 700, 1200, 2000, 3000, 4500, 6500, 8000]
+HEADER_FILENAME = os.path.join(BASE_DIR, "soundsort_model.h")
 
-# Random seed for reproducibility
-RNG = 42
+print("Script folder:", BASE_DIR)
+print("Dataset path:", DATASET_PATH)
 
-
-# =========================================================
-# Audio loading / preprocessing
-# =========================================================
-
-def load_wav_mono(path, target_sr=16000):
-    """
-    Load a WAV file, convert it to mono, convert to float32,
-    and resample it if necessary.
-
-    Returns:
-        sr : int
-            Sample rate after processing
-        x : np.ndarray
-            Mono audio signal in float32
-    """
+# =========================
+# WAV LOADING
+# =========================
+def load_wav_as_float(path):
     sr, x = wavfile.read(path)
 
-    # Convert integer audio to float32 in roughly [-1, 1]
+    if sr != FS:
+        raise ValueError(f"{path}: expected {FS} Hz, got {sr} Hz")
+
+    # Convert stereo -> mono if needed
+    if x.ndim > 1:
+        x = x[:, 0]
+
+    # Match STM32 normalization as closely as possible
     if x.dtype == np.int16:
         x = x.astype(np.float32) / 32768.0
-    elif x.dtype == np.int32:
-        x = x.astype(np.float32) / 2147483648.0
-    elif x.dtype == np.uint8:
-        # Unsigned 8-bit PCM is usually centered at 128
-        x = (x.astype(np.float32) - 128.0) / 128.0
+    elif np.issubdtype(x.dtype, np.integer):
+        info = np.iinfo(x.dtype)
+        x = x.astype(np.float32) / max(abs(info.min), abs(info.max))
     else:
-        # If already float, just cast to float32
         x = x.astype(np.float32)
 
-    # Convert stereo to mono by averaging channels
-    if x.ndim == 2:
-        x = np.mean(x, axis=1)
+    # Force exactly 8000 samples
+    if len(x) < AUDIO_LEN:
+        x = np.pad(x, (0, AUDIO_LEN - len(x)))
+    else:
+        x = x[:AUDIO_LEN]
 
-    # Resample to target sample rate if needed
-    if sr != target_sr:
-        x = resample_poly(x, target_sr, sr)
-        sr = target_sr
-
-    return sr, x
+    return x
 
 
-def trim_silence(x, threshold=0.03):
-    """
-    Remove leading and trailing low-amplitude regions.
+# =========================
+# FEATURE EXTRACTION
+# Matches patched STM32 code
+# =========================
+def extract_features_embedded(x):
+    x = np.array(x, dtype=np.float32, copy=True)
 
-    Args:
-        x : audio signal
-        threshold : amplitude threshold for detecting activity
+    # ------------------------------------------
+    # 0. Trim after last active sample
+    # same as patched C
+    # ------------------------------------------
+    last_active = np.where(np.abs(x) > 0.03)[0]
+    if last_active.size > 0:
+        x[last_active[-1] + 1:] = 0.0
 
-    Returns:
-        Trimmed audio signal
-    """
-    idx = np.where(np.abs(x) > threshold)[0]
+    # ------------------------------------------
+    # 1. Time-domain features
+    # ------------------------------------------
+    abs_x = np.abs(x)
+    sum_sq = np.sum(x * x)
+    peak = np.max(abs_x) + 1e-12
 
-    # If no sample exceeds threshold, return original signal
-    if len(idx) == 0:
-        return x
+    zcr_count = np.sum(
+        ((x[1:] >= 0.0) & (x[:-1] < 0.0)) |
+        ((x[1:] < 0.0) & (x[:-1] >= 0.0))
+    )
+    zcr = zcr_count / AUDIO_LEN
 
-    # Keep from first active sample to last active sample
-    return x[idx[0]:idx[-1] + 1]
+    third = AUDIO_LEN // 3
+    e1 = np.sum(x[:third] * x[:third]) + 1e-12
+    e3 = np.sum(x[-third:] * x[-third:]) + 1e-12
+    decay = np.log(e1 / e3)
 
+    active_ratio = np.sum(abs_x > 0.05) / AUDIO_LEN
 
-def fix_length(x, sr, duration_s):
-    """
-    Force audio clip to a fixed duration.
+    rms = np.sqrt(sum_sq / AUDIO_LEN + 1e-12)
 
-    If x is longer than target length -> truncate
-    If x is shorter -> zero-pad
+    # ------------------------------------------
+    # 2. Frequency-domain features
+    # ------------------------------------------
+    x_fft = x[:N_FFT].copy()
 
-    Returns:
-        Fixed-length signal
-    """
-    target_len = int(sr * duration_s)
+    # Same formula as C:
+    # 0.5 * (1 - cos(2*pi*i/(N_FFT-1)))
+    window = np.hanning(N_FFT).astype(np.float32)
+    x_fft *= window
 
-    if len(x) >= target_len:
-        return x[:target_len]
+    S = np.abs(np.fft.rfft(x_fft)) ** 2
+    total_energy = np.sum(S) + 1e-12
 
-    y = np.zeros(target_len, dtype=np.float32)
-    y[:len(x)] = x
-    return y
+    bin_width = FS / N_FFT
+    freqs = np.arange((N_FFT // 2) + 1, dtype=np.float32) * bin_width
 
+    centroid = np.sum(freqs * S) / total_energy
 
-# =========================================================
-# Feature extraction
-# IMPORTANT:
-# These features should match what you plan to compute on STM32
-# =========================================================
+    cumsum = np.cumsum(S)
+    target = 0.85 * total_energy
+    idx = int(np.searchsorted(cumsum, target))
+    idx = min(idx, len(freqs) - 1)
+    rolloff = freqs[idx]
 
-def extract_features(x, sr):
-    """
-    Extract a compact feature vector from one audio clip.
+    edges = [0, 300, 700, 1200, 2000, 3000, 4500, 6500, 8000]
+    bands = []
+    for i in range(len(edges) - 1):
+        mask = (freqs >= edges[i]) & (freqs < edges[i + 1])
+        band_e = np.sum(S[mask])
+        bands.append(band_e / total_energy)
 
-    Current features:
-    - RMS energy
-    - Peak amplitude
-    - Zero-crossing rate
-    - Decay ratio
-    - Spectral centroid
-    - Spectral rolloff
-    - Active ratio
-    - Band-energy features
-
-    Returns:
-        feats : np.ndarray of shape [num_features]
-    """
-
-    # -------- Time-domain features --------
-
-    # RMS (root-mean-square) energy
-    rms = np.sqrt(np.mean(x**2) + 1e-12)
-
-    # Peak absolute amplitude
-    peak = np.max(np.abs(x)) + 1e-12
-
-    # Zero-crossing rate:
-    # measures how often the signal changes sign
-    zcr = np.mean(np.abs(np.diff(np.signbit(x).astype(np.int32))))
-
-    # -------- Simple decay feature --------
-    # Compare early energy and late energy to capture "ringing" or "decay"
-    third = len(x) // 3
-    e1 = np.sum(x[:third] ** 2) + 1e-12
-    e3 = np.sum(x[-third:] ** 2) + 1e-12
-    decay_ratio = np.log(e1 / e3)
-
-    # -------- Frequency-domain features --------
-
-    # Apply a Hann window before FFT to reduce spectral leakage
-    window = np.hanning(len(x))
-
-    # Real FFT because input is real-valued audio
-    X = np.fft.rfft(x * window, n=N_FFT)
-
-    # Power spectrum
-    P = np.abs(X) ** 2
-
-    # Corresponding frequency axis
-    freqs = np.fft.rfftfreq(N_FFT, d=1.0 / sr)
-
-    total_energy = np.sum(P) + 1e-12
-
-    # Compute normalized band energies
-    band_energies = []
-    for lo, hi in zip(BAND_EDGES[:-1], BAND_EDGES[1:]):
-        mask = (freqs >= lo) & (freqs < hi)
-        band_e = np.sum(P[mask]) / total_energy
-        band_energies.append(band_e)
-
-    # Spectral centroid = weighted average frequency
-    spectral_centroid = np.sum(freqs * P) / total_energy
-
-    # Spectral rolloff = frequency below which 85% of spectral energy lies
-    cumsum = np.cumsum(P)
-    rolloff_idx = np.searchsorted(cumsum, 0.85 * total_energy)
-    spectral_rolloff = freqs[min(rolloff_idx, len(freqs) - 1)]
-
-    # Fraction of samples above a small threshold
-    active_ratio = np.mean(np.abs(x) > 0.05)
-
-    # Final feature vector
-    feats = np.array([
-        rms,
-        peak,
-        zcr,
-        decay_ratio,
-        spectral_centroid,
-        spectral_rolloff,
-        active_ratio,
-        *band_energies
-    ], dtype=np.float32)
-
-    return feats
+    feats = [rms, peak, zcr, decay, centroid, rolloff, active_ratio] + bands
+    return np.array(feats, dtype=np.float32)
 
 
-# =========================================================
-# Dataset loading
-# =========================================================
+# =========================
+# LOAD DATASET
+# =========================
+X = []
+y = []
 
-def load_dataset(data_dir):
-    """
-    Walk through all class folders, load every WAV file,
-    preprocess it, extract features, and build X/y arrays.
+print("Extracting features from WAV files...")
 
-    Returns:
-        X     : [num_samples, num_features]
-        y     : [num_samples]
-        paths : list of file paths
-    """
-    X = []
-    y = []
-    paths = []
+for label, class_name in enumerate(CLASSES):
+    class_dir = os.path.join(DATASET_PATH, class_name)
 
-    # Loop over each class folder in fixed class order
-    for class_idx, class_name in enumerate(CLASSES):
-        class_dir = data_dir / class_name
+    if not os.path.isdir(class_dir):
+        raise FileNotFoundError(f"Missing class folder: {class_dir}")
 
-        if not class_dir.exists():
-            print(f"Warning: missing folder {class_dir}")
-            continue
+    wav_files = [f for f in os.listdir(class_dir) if f.lower().endswith(".wav")]
+    print(f"{class_name}: {len(wav_files)} files")
 
-        wav_files = sorted(class_dir.glob("*.wav"))
-        print(f"{class_name}: {len(wav_files)} files")
+    for file in wav_files:
+        path = os.path.join(class_dir, file)
+        audio = load_wav_as_float(path)
+        feats = extract_features_embedded(audio)
+        X.append(feats)
+        y.append(label)
 
-        for wav_path in wav_files:
-            # Load and standardize sampling rate / channels
-            sr, x = load_wav_mono(wav_path, TARGET_SR)
+X = np.array(X, dtype=np.float32)
+y = np.array(y, dtype=np.int32)
 
-            # Remove quiet leading / trailing regions
-            x = trim_silence(x, threshold=0.03)
+print(f"\nDataset shape: X={X.shape}, y={y.shape}")
 
-            # Make every sample same length
-            x = fix_length(x, sr, CLIP_DURATION_S)
+# =========================
+# TRAIN / TEST SPLIT
+# =========================
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y,
+    test_size=0.2,
+    stratify=y,
+    random_state=RANDOM_STATE
+)
 
-            # Extract hand-crafted features
-            feats = extract_features(x, sr)
+print(f"Train: {len(X_train)}, Test: {len(X_test)}")
 
-            # Store sample
-            X.append(feats)
-            y.append(class_idx)
-            paths.append(str(wav_path))
+# =========================
+# SCALE + TRAIN
+# =========================
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
 
-    return np.array(X), np.array(y), paths
+model = LogisticRegression(
+    max_iter=2000,
+    solver="lbfgs",
+    random_state=RANDOM_STATE
+)
 
+model.fit(X_train_scaled, y_train)
 
-# =========================================================
-# Export trained model to a C header for STM32
-# =========================================================
+# =========================
+# EVALUATION
+# =========================
+y_pred = model.predict(X_test_scaled)
+acc = accuracy_score(y_test, y_pred)
 
-def export_c_header(model, out_path="soundsort_model.h"):
-    """
-    Export scaler mean/std and logistic regression weights/bias
-    to a C header file so STM32 can run inference.
+print(f"\nTest accuracy: {acc:.4f}\n")
+print("Classification report:")
+print(classification_report(y_test, y_pred, target_names=CLASSES))
 
-    The exported arrays include:
-    - FEATURE_MEAN
-    - FEATURE_SCALE
-    - LR_WEIGHTS
-    - LR_BIAS
-    """
-    scaler = model.named_steps["scaler"]
-    clf = model.named_steps["clf"]
+print("Confusion matrix:")
+print(confusion_matrix(y_test, y_pred))
 
-    means = scaler.mean_
-    scales = scaler.scale_
-    W = clf.coef_       # Shape: [num_classes, num_features]
-    b = clf.intercept_  # Shape: [num_classes]
+# =========================
+# EXPORT TO HEADER
+# =========================
+def export_to_header(model, scaler, classes, filename=HEADER_FILENAME):
+    num_classes = len(classes)
+    num_features = model.coef_.shape[1]
 
-    num_classes, num_features = W.shape
-
-    with open(out_path, "w") as f:
+    with open(filename, "w") as f:
         f.write("#ifndef SOUNDSORT_MODEL_H\n")
         f.write("#define SOUNDSORT_MODEL_H\n\n")
 
         f.write(f"#define NUM_CLASSES {num_classes}\n")
         f.write(f"#define NUM_FEATURES {num_features}\n\n")
 
-        # Export class names in same order as CLASSES list
-        f.write("static const char *CLASS_NAMES[NUM_CLASSES] = {")
-        f.write(", ".join([f"\"{c}\"" for c in CLASSES]))
+        f.write("static const char* CLASS_NAMES[] = {")
+        f.write(", ".join([f'"{c}"' for c in classes]))
         f.write("};\n\n")
 
-        # Export feature normalization mean
-        f.write("static const float FEATURE_MEAN[NUM_FEATURES] = {\n    ")
-        f.write(", ".join([f"{v:.8f}f" for v in means]))
-        f.write("\n};\n\n")
+        f.write("static const float FEATURE_MEAN[NUM_FEATURES] = {")
+        f.write(", ".join([f"{m:.9g}f" for m in scaler.mean_]))
+        f.write("};\n")
 
-        # Export feature normalization scale (std dev)
-        f.write("static const float FEATURE_SCALE[NUM_FEATURES] = {\n    ")
-        f.write(", ".join([f"{v:.8f}f" for v in scales]))
-        f.write("\n};\n\n")
+        f.write("static const float FEATURE_SCALE[NUM_FEATURES] = {")
+        f.write(", ".join([f"{s:.9g}f" for s in scaler.scale_]))
+        f.write("};\n\n")
 
-        # Export logistic regression weight matrix
         f.write("static const float LR_WEIGHTS[NUM_CLASSES][NUM_FEATURES] = {\n")
-        for row in W:
+        for row in model.coef_:
             f.write("    {")
-            f.write(", ".join([f"{v:.8f}f" for v in row]))
+            f.write(", ".join([f"{w:.9g}f" for w in row]))
             f.write("},\n")
         f.write("};\n\n")
 
-        # Export logistic regression bias vector
-        f.write("static const float LR_BIAS[NUM_CLASSES] = {\n    ")
-        f.write(", ".join([f"{v:.8f}f" for v in b]))
-        f.write("\n};\n\n")
+        f.write("static const float LR_BIAS[NUM_CLASSES] = {")
+        f.write(", ".join([f"{b:.9g}f" for b in model.intercept_]))
+        f.write("};\n\n")
 
         f.write("#endif\n")
 
-    print(f"Exported STM32 header to: {out_path}")
-
-
-# =========================================================
-# Main training flow
-# =========================================================
-
-def main():
-    # Load feature matrix X and label vector y
-    X, y, paths = load_dataset(DATA_DIR)
-
-    print(f"\nDataset shape: X={X.shape}, y={y.shape}")
-
-    # Stop early if no files were found
-    if len(X) == 0:
-        raise RuntimeError("No WAV files found.")
-
-    # -----------------------------------------------------
-    # Split dataset into:
-    # 60% train, 20% validation, 20% test
-    # -----------------------------------------------------
-
-    # First split: train+val vs test
-    X_trainval, X_test, y_trainval, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.20,
-        random_state=RNG,
-        stratify=y
-    )
-
-    # Second split: train vs val
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_trainval,
-        y_trainval,
-        test_size=0.25,   # 25% of 80% = 20% of full dataset
-        random_state=RNG,
-        stratify=y_trainval
-    )
-
-    print(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
-
-    # -----------------------------------------------------
-    # Build pipeline:
-    # 1) Standardize features
-    # 2) Train multinomial logistic regression
-    # -----------------------------------------------------
-    pipe = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(
-            solver="lbfgs",
-            max_iter=3000,
-            class_weight="balanced"
-        ))
-    ])
-
-    # -----------------------------------------------------
-    # Hyperparameter search:
-    # Tune regularization strength C
-    # Smaller C = stronger regularization
-    # Larger C = weaker regularization
-    # -----------------------------------------------------
-    param_grid = {
-        "clf__C": [0.01, 0.1, 1.0, 3.0, 10.0, 30.0, 100.0]
-    }
-
-    grid = GridSearchCV(
-        pipe,
-        param_grid=param_grid,
-        cv=5,
-        scoring="accuracy",
-        n_jobs=-1
-    )
-
-    # Train models for all candidate C values
-    grid.fit(X_train, y_train)
-
-    best_model = grid.best_estimator_
-    print("\nBest params:", grid.best_params_)
-
-    # -----------------------------------------------------
-    # Evaluate on validation set
-    # -----------------------------------------------------
-    y_val_pred = best_model.predict(X_val)
-    val_acc = accuracy_score(y_val, y_val_pred)
-    print(f"Validation accuracy: {val_acc:.4f}")
-
-    # -----------------------------------------------------
-    # Train final model on train+validation combined
-    # using the best C found above
-    # -----------------------------------------------------
-    final_model = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", LogisticRegression(
-            solver="lbfgs",
-            max_iter=3000,
-            class_weight="balanced",
-            C=grid.best_params_["clf__C"]
-        ))
-    ])
-
-    final_model.fit(X_trainval, y_trainval)
-
-    # -----------------------------------------------------
-    # Final test evaluation
-    # -----------------------------------------------------
-    y_test_pred = final_model.predict(X_test)
-    test_acc = accuracy_score(y_test, y_test_pred)
-
-    print(f"\nTest accuracy: {test_acc:.4f}")
-
-    print("\nClassification report:")
-    print(classification_report(y_test, y_test_pred, target_names=CLASSES))
-
-    print("Confusion matrix:")
-    print(confusion_matrix(y_test, y_test_pred))
-
-    # Export trained model parameters to C header
-    export_c_header(final_model, BASE_DIR / "soundsort_model.h")
-
-
-# Standard Python entry point
-if __name__ == "__main__":
-    main()
+export_to_header(model, scaler, CLASSES, HEADER_FILENAME)
+print(f"\nExported model header to: {HEADER_FILENAME}")
