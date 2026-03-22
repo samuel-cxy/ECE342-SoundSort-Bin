@@ -75,16 +75,16 @@ static void MX_TIM2_Init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-void set_servo_angle(uint8_t angle)
+/* USER CODE BEGIN 0 */ // 
+void set_servo_angle(uint8_t speed_throttle) // 0-360 motor
 {
     // Constrain the angle to prevent breaking the servo
-    if (angle > 180) {
-        angle = 180;
+    if (speed_throttle > 180) {
+        speed_throttle = 180;
     }
 
     // Map 0-180 degrees to 1000-2000 microseconds
-    uint16_t pulse_width = 1000 + ((angle * 1000) / 180); //eg : 0° maps to 1000 (1ms pulse) // 180° maps to 2000 (2ms pulse)
+    uint16_t pulse_width = 1000 + ((speed_throttle * 1000) / 180);
 
     // Safely update the timer register
     __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, pulse_width);
@@ -92,19 +92,13 @@ void set_servo_angle(uint8_t angle)
 
 void servo_control(void)
 {
-    HAL_GPIO_TogglePin(GPIOB, LD1_Pin);
+    HAL_GPIO_TogglePin(GPIOB, LD2_Pin);
 
-    set_servo_angle(0);   // Move to 0 degrees
-    HAL_Delay(1000);      // Wait 1 second
+    set_servo_angle(180);   // Change this from 0 to 90
+    HAL_Delay(300);
+    set_servo_angle(90);
 
-    set_servo_angle(90);  // Move to 90 degrees
-    HAL_Delay(1000);      // Wait 1 second
 
-    set_servo_angle(180); // Move to 180 degrees
-    HAL_Delay(1000);      // Wait 1 second
-
-    set_servo_angle(90);  // Move back to center
-    HAL_Delay(1000);      // Wait 1 second
 }
 
 static uint16_t i2s_rx_buf[I2S_DMA_SAMPLES];
