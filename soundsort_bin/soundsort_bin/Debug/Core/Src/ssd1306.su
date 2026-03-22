@@ -1,0 +1,11 @@
+../Core/Src/ssd1306.c:41:6:SSD1306_UpdateScreen	16	static
+../Core/Src/ssd1306.c:52:6:SSD1306_Fill	16	static
+../Core/Src/ssd1306.c:57:6:SSD1306_Clear	8	static
+../Core/Src/ssd1306.c:63:6:SSD1306_GotoXY	16	static
+../Core/Src/ssd1306.c:69:6:ssd1306_I2C_Write	160	static
+../Core/Src/ssd1306.c:78:19:SSD1306_Init	16	static
+../Core/Src/ssd1306.c:110:19:SSD1306_SetPixel	24	static
+../Core/Src/ssd1306.c:136:6:SSD1306_Scroll	24	static
+../Core/Src/ssd1306.c:159:6:SSD1306_Stopscroll	16	static
+../Core/Src/ssd1306.c:167:6:SSD1306_Putc	40	static
+../Core/Src/ssd1306.c:182:19:SSD1306_Puts	16	static
