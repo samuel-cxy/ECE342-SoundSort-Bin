@@ -1,9 +1,0 @@
-../Core/Src/vl53l1_platform.c:7:8:VL53L1_WriteMulti	40	static
-../Core/Src/vl53l1_platform.c:12:8:VL53L1_ReadMulti	40	static
-../Core/Src/vl53l1_platform.c:17:8:VL53L1_WrByte	16	static
-../Core/Src/vl53l1_platform.c:21:8:VL53L1_WrWord	24	static
-../Core/Src/vl53l1_platform.c:26:8:VL53L1_WrDWord	24	static
-../Core/Src/vl53l1_platform.c:31:8:VL53L1_RdByte	16	static
-../Core/Src/vl53l1_platform.c:35:8:VL53L1_RdWord	24	static
-../Core/Src/vl53l1_platform.c:42:8:VL53L1_RdDWord	24	static
-../Core/Src/vl53l1_platform.c:49:8:VL53L1_WaitMs	16	static

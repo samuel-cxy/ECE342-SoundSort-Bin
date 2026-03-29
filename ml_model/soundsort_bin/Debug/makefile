@@ -60,8 +60,8 @@ all: main-build
 main-build: soundsort_bin.elf secondary-outputs
 
 # Tool invocations
-soundsort_bin.elf soundsort_bin.map: $(OBJS) $(USER_OBJS) C:\Users\samue\Documents\STM32_project\soundsort_bin\STM32F446ZETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "soundsort_bin.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\samue\Documents\STM32_project\soundsort_bin\STM32F446ZETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="soundsort_bin.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
+soundsort_bin.elf soundsort_bin.map: $(OBJS) $(USER_OBJS) C:\Users\samue\Documents\ECE342\ECE342-SoundSort-Bin\ml_model\soundsort_bin\STM32F446ZETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "soundsort_bin.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\samue\Documents\ECE342\ECE342-SoundSort-Bin\ml_model\soundsort_bin\STM32F446ZETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="soundsort_bin.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

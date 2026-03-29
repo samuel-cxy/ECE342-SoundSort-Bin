@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": true,
-      "cwd": ".",
-      "program": "build/Debug/outDebug",
+      "cwd": "c:/Users/samue/Documents/ECE342/ECE342-SoundSort-Bin/ml_model/soundsort_bin/Core/Src",
+      "program": "c:/Users/samue/Documents/ECE342/ECE342-SoundSort-Bin/ml_model/soundsort_bin/Core/Src/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [
