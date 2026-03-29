@@ -1,8 +1,9 @@
 # ECE342-SoundSort-Bin
 STM32-based smart bin that automatically routes trash to the correct compartment based on its drop sound using machine learning.
 1. A trash drop is detected by the ToF and triggers the mic to start recording.
-2. Audio is stored in a buffer using DMA, 
-3. After feature extraction and prediction, the output will be displayed on the OLED screen.
+2. Audio is stored in a buffer using DMA and is used for feature extractions.
+3. After inputting the features for classification, the OLED screen displays the output with a confidence score.
+4. One servo rotates to the corresponding compartment, and another servo then opens the lid.
 
 Hardwares:
 - STM32: Nucleo F446ZE
@@ -22,7 +23,7 @@ Peripheral Pinout:
 - I2S: BCLK=PB13, LRCL=PB12, DOUT=PB15
 - I2C: SCL=PB8, SDA=PB9
 - ToF: GPIO=PC3, XSHUT=PC0
-- Servo: Bin Control=PD12, Lid Control=PD13
+- Servo: Compartment Selection Control=PD12, Lid Control=PD13
 
 Machine Learning:
 - Model: Multiclass Logistic Regression
