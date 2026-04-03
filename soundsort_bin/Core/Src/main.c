@@ -46,7 +46,7 @@
 #define HALF_SAMPLES (I2S_DMA_SAMPLES / 2)
 
 // If the ToF sensor sees an object closer than this, start listening
-#define TOF_THRESHOLD_MM 150
+#define TOF_THRESHOLD_MM 120
 
 // Audio sample rate used by both STM32 and Python training
 #define TARGET_SR 16000
@@ -245,7 +245,7 @@ void compute_power_spectrum(float *in, float *P) {
 // feats[] layout:
 // [0] RMS
 // [1] Peak
-// [2] ZCR
+// [2] Zero-crossing Rate
 // [3] Decay ratio
 // [4] Spectral centroid
 // [5] Spectral rolloff
@@ -446,7 +446,7 @@ static void fill_audio_buffer(uint16_t *src) {
 
 		// Simple DC blocker:
 		// track the slow average, subtract it away
-		dc_offset = dc_offset + ((raw_sample - dc_offset) >> 6);
+		dc_offset = dc_offset + ((raw_sample - dc_offset) / 64); // can adjust rate of change
 		float sample_float = (float) (raw_sample - dc_offset) / 32768.0f;
 
 		// Ignore the first few chunks after DMA starts
@@ -721,6 +721,8 @@ int main(void) {
 			if (audio_idx >= AUDIO_LEN) {
 				HAL_I2S_DMAStop(&hi2s2);
 
+				uint32_t t0 = HAL_GetTick();
+
 				float features[NUM_FEATURES];
 				extract_features(audio_buf, features);
 
@@ -728,11 +730,17 @@ int main(void) {
 
 				char msg[160];
 
+				// Find actual time that feature extractions and classifications cost
+				uint32_t t1 = HAL_GetTick();
+				uint32_t proc_ms = t1 - t0;
+				sprintf(msg, "Processing time: %lu ms\r\n", proc_ms);
+				HAL_UART_Transmit(&huart3, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+				// For Debug through UART
 				sprintf(msg, "\r\n=== CLASSIFICATION ===\r\n");
 				HAL_UART_Transmit(&huart3, (uint8_t*) msg, strlen(msg),
 				HAL_MAX_DELAY);
 
-				// For Debug through UART
 				sprintf(msg, "max amplitude: %.5f\r\n", max_heard_volume);
 				HAL_UART_Transmit(&huart3, (uint8_t*) msg, strlen(msg),
 				HAL_MAX_DELAY);
