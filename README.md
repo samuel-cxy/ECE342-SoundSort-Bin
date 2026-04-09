@@ -1,4 +1,4 @@
-# ECE342-SoundSort-Bin
+# SoundSort-Bin
 STM32-based smart bin that automatically routes trash to the correct compartment based on its drop sound using machine learning.
 1. A trash drop is detected by the ToF and triggers the mic to start recording.
 2. Audio is stored in a buffer using DMA and is used for feature extractions.
@@ -32,4 +32,3 @@ Machine Learning:
 
 Cite:
 - VL53L1X API: https://www.st.com/en/embedded-software/stsw-img009.html
-- SSD1306 API: UofT ECE342 Lab4
